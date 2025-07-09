@@ -105,6 +105,10 @@ unsafe partial class Engine
         if (_device.Handle != 0)
         {
             _vk!.DestroyDevice(_device, null);
+            if (_pipelineLayout.Handle != 0)
+            {
+                _vk!.DestroyPipelineLayout(_device, _pipelineLayout, null);
+            }
         }
         
         if (_instance.Handle != 0)
@@ -112,8 +116,8 @@ unsafe partial class Engine
             _vk!.DestroyInstance(_instance, null);
         }
         
-        _vk?.Dispose();
-        _window?.Dispose();
+        _vk!.Dispose();
+        _window!.Dispose();
     }
     
     private void CreateSurface()

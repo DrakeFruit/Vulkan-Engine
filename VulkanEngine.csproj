@@ -16,8 +16,8 @@
       <PackageReference Include="Silk.NET.Windowing" Version="2.22.0" />
     </ItemGroup>
 
-    <ItemGroup>
-      <ClCompile Include="Shaders\triangle.hlsl" />
-    </ItemGroup>
+    <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+      <Exec Command="/usr/bin/glslc Shaders/shader.vert -o vert.spv&#xA;/usr/bin/glslc Shaders/shader.frag -o frag.spv&#xA;mkdir -p bin/Debug/net9.0/shaders&#xA;mv vert.spv ./bin/Debug/net9.0/shaders&#xA;mv frag.spv ./bin/Debug/net9.0/shaders" />
+    </Target>
 
 </Project>
