@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+
 namespace VulkanEngine;
 
 unsafe partial class Engine
@@ -36,7 +38,7 @@ unsafe partial class Engine
         DebugUtilsMessageSeverityFlagsEXT messageSeverity, DebugUtilsMessageTypeFlagsEXT messageTypes,
         DebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData)
     {
-        Console.WriteLine($"validation layer:" + pCallbackData->PMessage->ToString());
+        Console.WriteLine($"validation layer:" + Marshal.PtrToStringAnsi((IntPtr)pCallbackData->PMessage));
         return Vk.False;
     }
 }

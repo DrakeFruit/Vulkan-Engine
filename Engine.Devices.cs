@@ -1,10 +1,6 @@
-using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using System.Text;
-using System.Xml.XPath;
 using Silk.NET.Core.Native;
-using Silk.NET.GLFW;
 
 namespace VulkanEngine;
 
@@ -20,14 +16,14 @@ unsafe partial class Engine
     {
         QueueFamilyIndices indices = FindQueueFamilies(_physicalDevice);
         
-        var uniqueQueueFamilies = new[] { indices.GraphicsFamily!.Value, indices.PresentFamily!.Value };
-        uniqueQueueFamilies = uniqueQueueFamilies.Distinct().ToArray();
+        var uniqueQueueFamilies = new[] { indices.GraphicsFamily!.Value, indices.PresentFamily!.Value }
+            .Distinct().ToArray();
 
         using var mem = GlobalMemory.Allocate(uniqueQueueFamilies.Length * sizeof(DeviceQueueCreateInfo));
         var queueCreateInfos = (DeviceQueueCreateInfo*)Unsafe.AsPointer(ref mem.GetPinnableReference());
 
         float queuePriority = 1.0f;
-        var queueCreateInfo = new DeviceQueueCreateInfo();
+        
         for (int i = 0; i < uniqueQueueFamilies.Length; i++)
         {
             queueCreateInfos[i] = new()
@@ -44,7 +40,7 @@ unsafe partial class Engine
         var createInfo = new DeviceCreateInfo();
         createInfo.SType = StructureType.DeviceCreateInfo;
         createInfo.QueueCreateInfoCount = (uint)uniqueQueueFamilies.Length;
-        createInfo.PQueueCreateInfos = &queueCreateInfo;
+        createInfo.PQueueCreateInfos = queueCreateInfos;
         createInfo.PEnabledFeatures = &deviceFeatures;
         createInfo.EnabledExtensionCount = (uint)_deviceExtensions.Length;
         createInfo.PpEnabledExtensionNames = (byte**)SilkMarshal.StringArrayToPtr(_deviceExtensions);
@@ -68,19 +64,13 @@ unsafe partial class Engine
         {
             SilkMarshal.Free((nint)createInfo.PpEnabledLayerNames);
         }
+        
+        SilkMarshal.Free((nint)createInfo.PpEnabledExtensionNames);
     }
     
     private void PickPhysicalDevice()
     {
-        uint deviceCount = 0;
-        _vk.EnumeratePhysicalDevices(_instance, ref deviceCount, null);
-        
-        if (deviceCount == 0) {
-            throw new Exception("failed to find GPUs with Vulkan support!");
-        }
-        
-        var devices = new PhysicalDevice[deviceCount];
-        _vk.EnumeratePhysicalDevices(_instance, ref deviceCount, null);
+        var devices = _vk!.GetPhysicalDevices(_instance);
 
         foreach (var device in devices)
         {
@@ -90,8 +80,11 @@ unsafe partial class Engine
                 break;
             }
         }
-        
-        if ( _physicalDevice.Handle == 0 ) throw new Exception("Failed to find a suitable GPU!");
+
+        if (_physicalDevice.Handle == 0)
+        {
+            throw new Exception("failed to find a suitable GPU!");
+        }
     }
     
     bool IsDeviceSuitable(PhysicalDevice device)
@@ -202,13 +195,54 @@ unsafe partial class Engine
         return indices;
     }
     
+    SurfaceFormatKHR ChooseSwapSurfaceFormat(SurfaceFormatKHR[] availableFormats) 
+    {
+        foreach ( var f in availableFormats ) 
+        {
+            if (f.Format == Format.B8G8R8A8Srgb && f.ColorSpace == ColorSpaceKHR.SpaceSrgbNonlinearKhr) return f;
+        }
+        
+        return availableFormats[0];
+    }
+    
+    PresentModeKHR ChooseSwapPresentMode(PresentModeKHR[] availablePresentModes) {
+        foreach ( var mode in availablePresentModes) {
+            if (mode == PresentModeKHR.MailboxKhr) {
+                return mode;
+            }
+        }
+        
+        return PresentModeKHR.FifoKhr;
+    }
+    
+    Extent2D ChooseSwapExtent(SurfaceCapabilitiesKHR capabilities) 
+    {
+        if (capabilities.CurrentExtent.Width != uint.MaxValue) return capabilities.CurrentExtent;
+        else
+        {
+            var framebufferSize = _window!.FramebufferSize;
+
+            var actualExtent = new Extent2D(
+                (uint)framebufferSize.X,
+                (uint)framebufferSize.Y
+            );
+
+            actualExtent.Width = Math.Clamp(
+                actualExtent.Width, capabilities.MinImageExtent.Width, capabilities.MaxImageExtent.Width);
+            actualExtent.Height = Math.Clamp(
+                actualExtent.Height, capabilities.MinImageExtent.Height, capabilities.MaxImageExtent.Height);
+
+            return actualExtent;
+        }
+    }
+    
     struct QueueFamilyIndices
     {
         public uint? GraphicsFamily { get; set; }
         public uint? PresentFamily { get; set; }
         public bool IsComplete()
         {
-            return GraphicsFamily.HasValue;
+            return GraphicsFamily.HasValue && PresentFamily.HasValue;
         }
     }
     
@@ -217,6 +251,5 @@ unsafe partial class Engine
         public SurfaceCapabilitiesKHR Capabilities;
         public SurfaceFormatKHR[] Formats;
         public PresentModeKHR[] PresentModes;
-    };
-
+    }
 }

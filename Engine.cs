@@ -1,9 +1,6 @@
-﻿using System.Numerics;
-using System.Runtime.InteropServices;
-using System.Text;
-using System.Xml.XPath;
+﻿using System.Runtime.InteropServices;
 using Silk.NET.Core.Native;
-using Silk.NET.GLFW;
+using Image = Silk.NET.Vulkan.Image;
 
 namespace VulkanEngine;
 
@@ -73,6 +70,9 @@ unsafe partial class Engine
         CreateSurface();
         PickPhysicalDevice();
         CreateLogicalDevice();
+        CreateSwapChain();
+        CreateImageViews();
+        CreateGraphicsPipeline();
     }
     
     private void MainLoop()
@@ -82,17 +82,37 @@ unsafe partial class Engine
 
     private void CleanUp()
     {
-        if (EnableValidationLayers)
-        {
-            _debugUtils!.DestroyDebugUtilsMessenger(_instance, _debugMessenger, null);
+        foreach (var i in _swapChainImageViews!) {
+            _vk!.DestroyImageView(_device, i, null);
         }
         
-        _khrSurface!.DestroySurface(_instance, _surface, null);
-        _vk!.DestroyInstance(_instance, null);
-        _vk!.DestroyDevice(_device, null);
-        _vk!.DestroyInstance(_instance, null);
-        _vk!.Dispose();
+        if (_swapChainImageViews != null)
+        {
+            foreach (var imageView in _swapChainImageViews)
+            {
+                _vk!.DestroyImageView(_device, imageView, null);
+            }
+        }
 
+        if (EnableValidationLayers && _debugUtils != null)
+        {
+            _debugUtils.DestroyDebugUtilsMessenger(_instance, _debugMessenger, null);
+        }
+
+        _khrSwapChain?.DestroySwapchain(_device, _swapChain, null);
+        _khrSurface?.DestroySurface(_instance, _surface, null);
+
+        if (_device.Handle != 0)
+        {
+            _vk!.DestroyDevice(_device, null);
+        }
+        
+        if (_instance.Handle != 0)
+        {
+            _vk!.DestroyInstance(_instance, null);
+        }
+        
+        _vk?.Dispose();
         _window?.Dispose();
     }
     
@@ -187,6 +207,6 @@ unsafe partial class Engine
         var availableLayerNames = 
             availableLayers.Select(layer => Marshal.PtrToStringAnsi((IntPtr)layer.LayerName)).ToHashSet();
         
-        return availableLayerNames.All(availableLayerNames.Contains);
+        return _validationLayers.All(availableLayerNames.Contains);
     }
 }
