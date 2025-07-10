@@ -1,6 +1,8 @@
-﻿using System.Runtime.InteropServices;
+﻿using System.Numerics;
+using System.Runtime.InteropServices;
 using Silk.NET.Core.Native;
-using Image = Silk.NET.Vulkan.Image;
+using Image = Silk.NET.GLFW.Image;
+using Semaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace VulkanEngine;
 
@@ -16,22 +18,22 @@ unsafe partial class Engine
 
     private readonly string[] _deviceExtensions =
     [
-            KhrSwapchain.ExtensionName
+        KhrSwapchain.ExtensionName
     ];
-    
-    #if DEBUG
-        private const bool EnableValidationLayers = true;
-    #else
+
+#if DEBUG
+    private const bool EnableValidationLayers = true;
+#else
         private const bool EnableValidationLayers = false;
-    #endif
-    
+#endif
+
     private Vk? _vk;
     private IWindow? _window;
     private Instance _instance;
-    
+
     private KhrSurface? _khrSurface;
     private SurfaceKHR _surface;
-    
+
     public static void Main(string[] args)
     {
         var app = new Engine();
@@ -52,8 +54,9 @@ unsafe partial class Engine
         {
             Size = new Vector2D<int>(Width, Height),
             Title = "Vulkan Engine",
+            VSync = true,
         };
-        
+
         _window = Window.Create(options);
         _window.Initialize();
 
@@ -62,7 +65,7 @@ unsafe partial class Engine
             throw new Exception("Windowing platform doesn't support Vulkan.");
         }
     }
-    
+
     private void InitVulkan()
     {
         CreateInstance();
@@ -72,54 +75,86 @@ unsafe partial class Engine
         CreateLogicalDevice();
         CreateSwapChain();
         CreateImageViews();
+        CreateRenderPass();
         CreateGraphicsPipeline();
+        CreateFrameBuffers();
+        CreateCommandPool();
+        CreateCommandBuffers();
+        CreateSyncObjects();
     }
-    
+
     private void MainLoop()
     {
+        _window!.Render += DrawFrame;
         _window!.Run();
+        _vk!.DeviceWaitIdle(_device);
     }
 
     private void CleanUp()
     {
-        foreach (var i in _swapChainImageViews!) {
-            _vk!.DestroyImageView(_device, i, null);
+        for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+        {
+            _vk!.DestroySemaphore(_device, _renderFinishedSemaphores![i], null);
+            _vk!.DestroySemaphore(_device, _imageAvailableSemaphores![i], null);
+            _vk!.DestroyFence(_device, _inFlightFences![i], null);
+        }
+        foreach (var framebuffer in _swapChainFramebuffers!)
+        {
+            _vk!.DestroyFramebuffer(_device, framebuffer, null);
+        }
+        foreach (var imageView in _swapChainImageViews!)
+        {
+            _vk!.DestroyImageView(_device, imageView, null);
         }
         
-        if (_swapChainImageViews != null)
+        _vk!.DestroyCommandPool(_device, _commandPool, null);
+        _vk!.DestroyPipeline(_device, _graphicsPipeline, null);
+        _vk!.DestroyPipelineLayout(_device, _pipelineLayout, null);
+        _vk!.DestroyRenderPass(_device, _renderPass, null);
+        _vk!.DestroyDevice(_device, null);
+        _khrSwapChain!.DestroySwapchain(_device, _swapChain, null);
+
+        if (EnableValidationLayers)
         {
-            foreach (var imageView in _swapChainImageViews)
-            {
-                _vk!.DestroyImageView(_device, imageView, null);
-            }
+            //DestroyDebugUtilsMessenger equivilant to method DestroyDebugUtilsMessengerEXT from original tutorial.
+            _debugUtils!.DestroyDebugUtilsMessenger(_instance, _debugMessenger, null);
         }
 
-        if (EnableValidationLayers && _debugUtils != null)
-        {
-            _debugUtils.DestroyDebugUtilsMessenger(_instance, _debugMessenger, null);
-        }
-
-        _khrSwapChain?.DestroySwapchain(_device, _swapChain, null);
-        _khrSurface?.DestroySurface(_instance, _surface, null);
-
-        if (_device.Handle != 0)
-        {
-            _vk!.DestroyDevice(_device, null);
-            if (_pipelineLayout.Handle != 0)
-            {
-                _vk!.DestroyPipelineLayout(_device, _pipelineLayout, null);
-            }
-        }
-        
-        if (_instance.Handle != 0)
-        {
-            _vk!.DestroyInstance(_instance, null);
-        }
-        
+        _khrSurface!.DestroySurface(_instance, _surface, null);
+        _vk!.DestroyInstance(_instance, null);
         _vk!.Dispose();
-        _window!.Dispose();
+
+        _window?.Dispose();
     }
     
+    private void CreateSyncObjects() {
+        _imageAvailableSemaphores = new Semaphore[MAX_FRAMES_IN_FLIGHT];
+        _renderFinishedSemaphores = new Semaphore[MAX_FRAMES_IN_FLIGHT];
+        _inFlightFences = new Fence[MAX_FRAMES_IN_FLIGHT];
+        _imagesInFlight = new Fence[_swapChainImages!.Length];
+
+        SemaphoreCreateInfo semaphoreInfo = new()
+        {
+            SType = StructureType.SemaphoreCreateInfo,
+        };
+
+        FenceCreateInfo fenceInfo = new()
+        {
+            SType = StructureType.FenceCreateInfo,
+            Flags = FenceCreateFlags.SignaledBit,
+        };
+
+        for (var i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+        {
+            if (_vk!.CreateSemaphore(_device, in semaphoreInfo, null, out _imageAvailableSemaphores[i]) != Result.Success ||
+                _vk!.CreateSemaphore(_device, in semaphoreInfo, null, out _renderFinishedSemaphores[i]) != Result.Success ||
+                _vk!.CreateFence(_device, in fenceInfo, null, out _inFlightFences[i]) != Result.Success)
+            {
+                throw new Exception("failed to create synchronization objects for a frame!");
+            }
+        }
+    }
+
     private void CreateSurface()
     {
         if (!_vk!.TryGetInstanceExtension<KhrSurface>(_instance, out _khrSurface))
@@ -133,12 +168,12 @@ unsafe partial class Engine
     private void CreateInstance()
     {
         _vk = Vk.GetApi();
-        
+
         if (EnableValidationLayers && !ValidationLayersSupported())
         {
             throw new Exception("Validation layers requested are not available");
         }
-        
+
         ApplicationInfo appInfo;
         appInfo.SType = StructureType.ApplicationInfo;
         appInfo.PApplicationName = (byte*)Marshal.StringToHGlobalAnsi("Vulkan Engine");
@@ -155,11 +190,11 @@ unsafe partial class Engine
         createInfo.EnabledExtensionCount = (uint)requiredExtensions.Length;
         createInfo.PpEnabledExtensionNames = (byte**)SilkMarshal.StringArrayToPtr(requiredExtensions);
 
-        if (EnableValidationLayers) 
+        if (EnableValidationLayers)
         {
             createInfo.EnabledLayerCount = (uint)_validationLayers.Length;
             createInfo.PpEnabledLayerNames = (byte**)SilkMarshal.StringArrayToPtr(_validationLayers);
-            
+
             DebugUtilsMessengerCreateInfoEXT debugCreateInfo = new();
             PopulateDebugMessengerCreateInfo(ref debugCreateInfo);
             createInfo.PNext = &debugCreateInfo;
@@ -170,14 +205,14 @@ unsafe partial class Engine
             createInfo.PNext = null;
         }
 
-        if ( _vk.CreateInstance(in createInfo, null, out _instance) != Result.Success)
+        if (_vk.CreateInstance(in createInfo, null, out _instance) != Result.Success)
         {
             throw new Exception("failed to create instance!");
         }
-        
+
         Marshal.FreeHGlobal((IntPtr)appInfo.PApplicationName);
         Marshal.FreeHGlobal((IntPtr)appInfo.PEngineName);
-        
+
         if (EnableValidationLayers)
         {
             SilkMarshal.Free((nint)createInfo.PpEnabledLayerNames);
@@ -201,16 +236,16 @@ unsafe partial class Engine
     {
         uint layerCount = 0;
         _vk?.EnumerateInstanceLayerProperties(ref layerCount, null);
-        
+
         var availableLayers = new LayerProperties[layerCount];
         fixed (LayerProperties* availableLayersPtr = availableLayers)
         {
             _vk!.EnumerateInstanceLayerProperties(ref layerCount, availableLayersPtr);
         }
-        
-        var availableLayerNames = 
+
+        var availableLayerNames =
             availableLayers.Select(layer => Marshal.PtrToStringAnsi((IntPtr)layer.LayerName)).ToHashSet();
-        
+
         return _validationLayers.All(availableLayerNames.Contains);
     }
 }
